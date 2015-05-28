@@ -9,8 +9,9 @@ VCURL		= -v
 VTAR		= -v
 else
 V		= @
-VRPM		= -q
+VRPM		= --quiet
 VCURL		= -q
+VOUT		= > /dev/null 2>&1
 endif
 
 
@@ -26,6 +27,7 @@ RELRPM		= $(BASEREPO)/Packages/sl-release-$(RELRPMVER).$(ARCH).rpm
 
 DLTMP		= /storage/vpsadminos/dev/dltmp
 INSTMP		= /storage/vpsadminos/dev/instmp
+INITRDTMP	= /storage/vpsadminos/dev/initrd
 TARGET_FILENAME	= /storage/vpsadminos/dev/baseos.tar.gz
 
 TARGET_TARCOMP	= -j
@@ -68,8 +70,12 @@ baseurl=$(VPSADMINOSREPO)
 endef
 export YUM_CONF
 
+define GET_KERNEL_VERSION
+ls $(INSTMP)/boot/vmlinuz* | sort -r | head -n1 | grep -oP "2\.6\..*$$"
+endef
+
 mktemps:
-	$Vmkdir -p $(INSTMP) $(DLTMP)
+	$Vmkdir -p $(INSTMP) $(DLTMP) $(INITRDTMP)
 
 baseos_download_relrpm:
 	$Vcurl $(VCURL) -o $(DLTMP)/release.rpm $(RELRPM)
@@ -84,6 +90,10 @@ baseos_bootstrap:
 
 baseos_install_rpm:
 	$(YUM) install `cat pkglist`
+
+baseos_install_zfs:
+	$Vkernel=`$(GET_KERNEL_VERSION)`; \
+	$(YUM) install kmod-zfs-$$kernel;
 
 baseos_target_cleanup:
 	$(YUM) clean all
@@ -102,17 +112,28 @@ baseos_stats:
 	$Vecho -e "Total size:\t`du -shx --apparent-size $(INSTMP)`"
 	$Vecho -e "Packed size:\t`du -shx --apparent-size $(TARGET_FILENAME)`"
 
-cleanup:
-	$Vrm -Rf $(INSTMP) $(DLTMP)
+initrd_unpack:
+	$Vkernel=`$(GET_KERNEL_VERSION)`; \
+	cp $(INSTMP)/boot/initramfs-$${kernel}.img $(DLTMP)/initrd.img.gz; \
+	gunzip -f $(DLTMP)/initrd.img.gz; \
+	pushd $(INITRDTMP) $(VOUT); \
+	cpio -id < $(DLTMP)/initrd.img $(VOUT);
+
+initrd_pack:
+
+clean:
+	$Vrm -Rf $(INSTMP) $(DLTMP) $(INITRDTMP)
 
 ifeq ($(STEP),)
 baseos_download_relrpm:	mktemps
 baseos_bootstrap:	baseos_download_relrpm
 baseos_install_rpm:	baseos_bootstrap
-baseos_target_cleanup:	baseos_install_rpm
+baseos_install_zfs:	baseos_install_rpm
+baseos_target_cleanup:	baseos_install_zfs
 baseos_target_pack:	baseos_target_cleanup
-cleanup:		
-all:			baseos_target_pack
+baseos_stats:		baseos_target_pack
+clean:
+all:			baseos_stats
 .DEFAULT_GOAL :=	all
 endif
 
